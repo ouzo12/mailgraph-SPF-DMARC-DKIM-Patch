@@ -1,0 +1,165 @@
+*** mailgraph	2012-06-17 00:00:00.000000000 +0200
+--- mailgraph	2014-04-24 08:59:58.964977886 +0200
+***************
+*** 4,9 ****
+--- 4,10 ----
+  # copyright (c) 2000-2007 ETH Zurich
+  # copyright (c) 2000-2007 David Schweikert <david@schweikert.ch>
+  # released under the GNU General Public License
++ # with dkim-, dmarc, spf-patch Sebastian van de Meer <kernel-error@kernel-error.de>
+  
+  ######## Parse::Syslog 1.09 (automatically embedded) ########
+  package Parse::Syslog;
+***************
+*** 382,388 ****
+  my $rrd_greylist = "mailgraph_greylist.rrd";
+  my $year;
+  my $this_minute;
+! my %sum = ( sent => 0, received => 0, bounced => 0, rejected => 0, virus => 0, spam => 0, greylisted => 0, delayed => 0);
+  my $rrd_inited=0;
+  
+  my %opt = ();
+--- 383,389 ----
+  my $rrd_greylist = "mailgraph_greylist.rrd";
+  my $year;
+  my $this_minute;
+! my %sum = ( sent => 0, received => 0, bounced => 0, rejected => 0, spfnone => 0, spffail => 0, spfpass => 0, dmarcnone => 0, dmarcfail => 0, dmarcpass => 0, dkimnone => 0, dkimfail => 0, dkimpass => 0, virus => 0, spam => 0, greylisted => 0, delayed => 0);
+  my $rrd_inited=0;
+  
+  my %opt = ();
+***************
+*** 396,401 ****
+--- 397,411 ----
+  sub event_rejected($);
+  sub event_virus($);
+  sub event_spam($);
++ sub event_spfnone($);
++ sub event_spffail($);
++ sub event_spfpass($);
++ sub event_dmarcnone($);
++ sub event_dmarcfail($);
++ sub event_dmarcpass($);
++ sub event_dkimnone($);
++ sub event_dkimfail($);
++ sub event_dkimpass($);
+  sub event_greylisted($);
+  sub event_delayed($);
+  sub init_rrd($);
+***************
+*** 533,538 ****
+--- 543,557 ----
+  				'DS:recv:ABSOLUTE:'.($rrdstep*2).':0:U',
+  				'DS:bounced:ABSOLUTE:'.($rrdstep*2).':0:U',
+  				'DS:rejected:ABSOLUTE:'.($rrdstep*2).':0:U',
++ 				'DS:spfnone:ABSOLUTE:'.($rrdstep*2).':0:U',
++ 				'DS:spffail:ABSOLUTE:'.($rrdstep*2).':0:U',
++ 				'DS:spfpass:ABSOLUTE:'.($rrdstep*2).':0:U',
++ 				'DS:dmarcnone:ABSOLUTE:'.($rrdstep*2).':0:U',
++ 				'DS:dmarcfail:ABSOLUTE:'.($rrdstep*2).':0:U',
++ 				'DS:dmarcpass:ABSOLUTE:'.($rrdstep*2).':0:U',
++ 				'DS:dkimnone:ABSOLUTE:'.($rrdstep*2).':0:U',
++ 				'DS:dkimfail:ABSOLUTE:'.($rrdstep*2).':0:U',
++ 				'DS:dkimpass:ABSOLUTE:'.($rrdstep*2).':0:U',
+  				"RRA:AVERAGE:0.5:$day_steps:$realrows",   # day
+  				"RRA:AVERAGE:0.5:$week_steps:$realrows",  # week
+  				"RRA:AVERAGE:0.5:$month_steps:$realrows", # month
+***************
+*** 614,619 ****
+--- 633,649 ----
+  				event($time, 'bounced');
+  			}
+  		}
++ 	  elsif ($prog eq 'policy-spf') {
++ 	    if ($text =~ /Received-SPF: none/) {
++ 	      event($time, 'spfnone');
++ 	    }
++ 	    elsif($text =~ /Received-SPF: pass/) {
++ 				event($time, 'spfpass');
++ 			}
++ 	    elsif($text =~ /Received-SPF:/) {
++ 				event($time, 'spffail');
++ 			}
++ 	  }
+  		elsif($prog eq 'local') {
+  			if($text =~ /\bstatus=bounced\b/) {
+  				event($time, 'bounced');
+***************
+*** 862,867 ****
+--- 892,919 ----
+  			event($time, 'virus');
+  		}
+  	}
++ 	elsif ($prog eq 'opendmarc') {
++ 		if ($text =~ /pass/) {
++ 			event($time, 'dmarcpass');
++ 		}
++ 		elsif($text =~ /none/) {
++ 			event($time, 'dmarcnone');
++ 		}
++ 		elsif($text =~ /fail/) {
++ 			event($time, 'dmarcfail');
++ 		}
++ 	}
++ 	elsif ($prog eq 'opendkim') {
++ 		if ($text =~ /DKIM verification successful/) {
++ 			event($time, 'dkimpass');
++ 		}
++ 		elsif($text =~ /no signature data/) {
++ 			event($time, 'dkimnone');
++ 		}
++ 		elsif($text =~ /bad signature data/) {
++ 			event($time, 'dkimfail');
++ 		}
++ 	}	
+  	elsif($prog eq 'avmilter') {
+  		# AntiVir Milter
+  		if($text =~ /^Alert!/) {
+***************
+*** 918,931 ****
+  	return 1 if $m == $this_minute;
+  	return 0 if $m < $this_minute;
+  
+! 	print "update $this_minute:$sum{sent}:$sum{received}:$sum{bounced}:$sum{rejected}:$sum{virus}:$sum{spam}:$sum{greylisted}:$sum{delayed}\n" if $opt{verbose};
+! 	RRDs::update $rrd, "$this_minute:$sum{sent}:$sum{received}:$sum{bounced}:$sum{rejected}" unless $opt{'no-mail-rrd'};
+  	RRDs::update $rrd_virus, "$this_minute:$sum{virus}:$sum{spam}" unless $opt{'no-virus-rrd'};
+  	RRDs::update $rrd_greylist, "$this_minute:$sum{greylisted}:$sum{delayed}" unless $opt{'no-greylist-rrd'};
+  	if($m > $this_minute+$rrdstep) {
+  		for(my $sm=$this_minute+$rrdstep;$sm<$m;$sm+=$rrdstep) {
+! 			print "update $sm:0:0:0:0:0:0:0:0 (SKIP)\n" if $opt{verbose};
+! 			RRDs::update $rrd, "$sm:0:0:0:0" unless $opt{'no-mail-rrd'};
+  			RRDs::update $rrd_virus, "$sm:0:0" unless $opt{'no-virus-rrd'};
+  			RRDs::update $rrd_greylist, "$sm:0:0" unless $opt{'no-greylist-rrd'};
+  		}
+--- 970,983 ----
+  	return 1 if $m == $this_minute;
+  	return 0 if $m < $this_minute;
+  
+! 	print "update $this_minute:$sum{sent}:$sum{received}:$sum{bounced}:$sum{rejected}:$sum{spfnone}:$sum{spffail}:$sum{spfpass}:$sum{dmarcnone}:$sum{dmarcfail}:$sum{dmarcpass}:$sum{dkimnone}:$sum{dkimfail}:$sum{dkimpass}:$sum{virus}:$sum{spam}:$sum{greylisted}:$sum{delayed}\n" if $opt{verbose};
+! 	RRDs::update $rrd, "$this_minute:$sum{sent}:$sum{received}:$sum{bounced}:$sum{rejected}:$sum{spfnone}:$sum{spffail}:$sum{spfpass}:$sum{dmarcnone}:$sum{dmarcfail}:$sum{dmarcpass}:$sum{dkimnone}:$sum{dkimfail}:$sum{dkimpass}" unless $opt{'no-mail-rrd'};
+  	RRDs::update $rrd_virus, "$this_minute:$sum{virus}:$sum{spam}" unless $opt{'no-virus-rrd'};
+  	RRDs::update $rrd_greylist, "$this_minute:$sum{greylisted}:$sum{delayed}" unless $opt{'no-greylist-rrd'};
+  	if($m > $this_minute+$rrdstep) {
+  		for(my $sm=$this_minute+$rrdstep;$sm<$m;$sm+=$rrdstep) {
+! 			print "update $sm:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0:0 (SKIP)\n" if $opt{verbose};
+! 			RRDs::update $rrd, "$sm:0:0:0:0:0:0:0:0:0:0:0:0:0" unless $opt{'no-mail-rrd'};
+  			RRDs::update $rrd_virus, "$sm:0:0" unless $opt{'no-virus-rrd'};
+  			RRDs::update $rrd_greylist, "$sm:0:0" unless $opt{'no-greylist-rrd'};
+  		}
+***************
+*** 935,940 ****
+--- 987,1001 ----
+  	$sum{received}=0;
+  	$sum{bounced}=0;
+  	$sum{rejected}=0;
++ 	$sum{spfnone}=0;
++ 	$sum{spffail}=0;
++ 	$sum{spfpass}=0;
++ 	$sum{dmarcnone}=0;
++ 	$sum{dmarcfail}=0;
++ 	$sum{dmarcpass}=0;
++ 	$sum{dkimnone}=0;
++ 	$sum{dkimfail}=0;
++ 	$sum{dkimpass}=0;
+  	$sum{virus}=0;
+  	$sum{spam}=0;
+  	$sum{greylisted}=0;
